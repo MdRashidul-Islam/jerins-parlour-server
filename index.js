@@ -3,8 +3,10 @@ const app = express();
 const cors = require("cors");
 const admin = require("firebase-admin");
 require("dotenv").config();
-const { MongoClient } = require("mongodb");
 const ObjectId = require("mongodb").ObjectId;
+const { MongoClient } = require("mongodb");
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
+
 const fileUpload = require("express-fileupload");
 
 const port = process.env.PORT || 5000;
@@ -28,6 +30,7 @@ const client = new MongoClient(uri, {
 async function verifyToken(req, res, next) {
   if (req.headers?.authorization?.startsWith("Bearer ")) {
     const token = req.headers.authorization.split(" ")[1];
+
     try {
       const decodedUser = await admin.auth().verifyIdToken(token);
       req.decodedEmail = decodedUser.email;
@@ -68,14 +71,57 @@ async function run() {
     });
     //--------------post ordered data end ----------------------//
 
-    //---------------get booked service by email start  --------------//
+    //-----Post new service by Admin start-----------------//
+    app.post("/services", async (req, res) => {
+      const service = req.body;
+      const result = await serviceCollection.insertOne(service);
+      res.json(result);
+    });
+    //-----Post new service by Admin end-----------------//
+
+    //-----get booked service by email start-----//
     app.get("/bookedService/:email", verifyToken, async (req, res) => {
       const result = await bookedCollection
-        .find({ email: req.params.email })
+        .find({ email: req.params.email.toString() })
         .toArray();
       res.json(result);
     });
-    //---------------get booked service by email end --------------//
+    //-----get booked service by email end-----//
+
+    //-----Payment section start -----//
+    app.get("/bookingService/:id", async (req, res) => {
+      const id = req.params.id;
+
+      const query = { _id: ObjectId(id) };
+      const result = await bookedCollection.findOne(query);
+      res.json(result);
+    });
+
+    app.put("/bookingService/:id", async (req, res) => {
+      const id = req.params.id;
+      const payment = req.body;
+      const filter = { _id: ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          payment: payment,
+        },
+      };
+      const result = await bookedCollection.updateOne(filter, updateDoc);
+      res.json(result);
+    });
+
+    app.post("/create-payment-intent", async (req, res) => {
+      const paymentInfo = req.body;
+      const amount = paymentInfo.price * 100;
+      const paymentIntent = await stripe.paymentIntents.create({
+        currency: "usd",
+        amount: amount,
+        payment_method_types: ["card"],
+      });
+      res.json({ clientSecret: paymentIntent.client_secret });
+    });
+
+    //-----Payment section end -----//
 
     //--------------Delete service by admin start----------------------//
     app.delete("/services/:id", async (req, res) => {
